@@ -39,6 +39,7 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         shell: bash
         run: node scripts/validate-version.mjs --tag "$RELEASE_TAG"
+      - run: npm run typecheck
       - run: npm test
       - run: npm run pack
       - run: npm run check

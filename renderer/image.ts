@@ -3,14 +3,26 @@ export const MAX_IMAGE_EDGE = 8192;
 export const MAX_IMAGE_PIXELS = 16 * 1024 * 1024;
 export const MAX_QUEUE = 20;
 
-export function imageType(bytes) {
+export interface ImageDimensions { width: number; height: number }
+export interface PreparedImage extends ImageDimensions {
+  id: string;
+  name: string;
+  dataUrl: string;
+  bytes: number;
+  originalWidth: number;
+  originalHeight: number;
+  resized: boolean;
+}
+export type ImageMime = "image/png" | "image/jpeg";
+
+export function imageType(bytes: Uint8Array): ImageMime {
   const png = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
   if (png.every((byte, index) => bytes[index] === byte)) return "image/png";
   if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
   throw new Error("文件内容不是 PNG 或 JPEG 图片。");
 }
 
-export function outputDimensions(width, height, edge = 0) {
+export function outputDimensions(width: number, height: number, edge = 0): ImageDimensions {
   if (![width, height].every((n) => Number.isSafeInteger(n) && n > 0) || width > MAX_IMAGE_EDGE || height > MAX_IMAGE_EDGE) {
     throw new Error(`原图尺寸 ${width} × ${height} 无效；单边最多 8192 像素。`);
   }
@@ -25,17 +37,23 @@ export function outputDimensions(width, height, edge = 0) {
   return result;
 }
 
-export function dataUrlBytes(url) {
+export function dataUrlBytes(url: string): number {
   const match = /^data:image\/(?:png|jpeg);base64,([A-Za-z0-9+/]+={0,2})$/.exec(url);
-  if (!match || match[1].length % 4 !== 0) throw new Error("图片编码无效，请重新导入。");
+  if (!match?.[1] || match[1].length % 4 !== 0) throw new Error("图片编码无效，请重新导入。");
   const body = match[1];
   return body.length / 4 * 3 - (body.endsWith("==") ? 2 : body.endsWith("=") ? 1 : 0);
 }
 
-function readFile(blob, mode) {
+function readFile(blob: Blob, mode: "buffer"): Promise<ArrayBuffer>;
+function readFile(blob: Blob, mode: "url"): Promise<string>;
+function readFile(blob: Blob, mode: "buffer" | "url"): Promise<ArrayBuffer | string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => reader.result !== null ? resolve(reader.result) : reject(new Error("无法读取图片。"));
+    reader.onload = () => {
+      const result = reader.result;
+      if (mode === "buffer" && result instanceof ArrayBuffer || mode === "url" && typeof result === "string") resolve(result);
+      else reject(new Error("无法读取图片。"));
+    };
     reader.onerror = () => reject(new Error("无法读取图片，请重新选择文件。"));
     reader.onabort = () => reject(new Error("图片读取已中止。"));
     if (mode === "buffer") reader.readAsArrayBuffer(blob);
@@ -44,7 +62,7 @@ function readFile(blob, mode) {
 }
 
 /** Inspect the declared dimensions before passing untrusted bytes to a decoder. */
-export function headerDimensions(bytes, type = imageType(bytes)) {
+export function headerDimensions(bytes: Uint8Array, type: ImageMime = imageType(bytes)): ImageDimensions {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   if (type === "image/png") {
     if (bytes.length < 24 || view.getUint32(8) !== 13 || view.getUint32(12) !== 0x49484452) throw new Error("PNG 图片头不完整。");
@@ -55,6 +73,7 @@ export function headerDimensions(bytes, type = imageType(bytes)) {
     if (bytes[index++] !== 0xff) throw new Error("JPEG 图片头无效。");
     while (bytes[index] === 0xff) index++;
     const marker = bytes[index++];
+    if (marker === undefined) break;
     if (marker === 0xda || marker === 0xd9) break;
     if (marker === 0x01 || marker >= 0xd0 && marker <= 0xd8) continue;
     if (index + 2 > bytes.length) break;
@@ -70,7 +89,7 @@ export function headerDimensions(bytes, type = imageType(bytes)) {
 }
 
 /** The explicit file input is the only source; no native path crosses the bridge. */
-export async function prepareImage(file, edge = 0) {
+export async function prepareImage(file: File, edge = 0): Promise<PreparedImage> {
   if (!file.size) throw new Error("图片文件为空。");
   if (file.size > MAX_IMAGE_BYTES) throw new Error("原图文件不能超过 4 MiB，请先用图片编辑器另存为 PNG 或 JPEG。");
   const buffer = await readFile(file, "buffer");
@@ -81,7 +100,7 @@ export async function prepareImage(file, edge = 0) {
   outputDimensions(declared.width, declared.height, edge);
   // Browser MIME associations may be missing on Windows: label the detected bytes.
   const original = await readFile(new Blob([buffer], { type: mime }), "url");
-  const image = await new Promise((resolve, reject) => {
+  const image = await new Promise<HTMLImageElement>((resolve, reject) => {
     const value = new Image();
     value.onload = () => resolve(value);
     value.onerror = () => reject(new Error("图片损坏或浏览器无法解码。"));

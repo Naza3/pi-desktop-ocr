@@ -22,7 +22,7 @@
 - `ocr.queue({action:'move',id,direction:-1|1})` / `{action:'remove',id}` / `{action:'clear'}` -> Snapshot。运行中拒绝变动；已开始图不能改回pending或自动重放。
 - `ocr.start({})` -> `{started:true}`，后台按顺序处理pending，复用模型。停止/失败暂停整批，再开始仅继续pending，不重做已开始项。
 - `ocr.stop({})` -> `{stopping:true}`，中止本插件当前请求并保存部分文字。Nexa等待原生清理确认；通用模式只断开请求，标记后台清理无法确认，继续前提示用户确认服务端结束并重新连接。
-- `ocr.result({id})` -> Result|null，可查队列已运行项/历史。
+- `ocr.result({id})` -> Result|HistoryResult|null，可查队列已运行项/历史。仍在内存队列中的条目含实时状态；磁盘历史只返回id/name/text。
 - `ocr.history.delete({id})` / `ocr.history.clear({})` -> Snapshot（运行中拒绝）。
 - `ocr.export({id})`通过主进程 `pi.fs.requestDirectory`+`pi.fs.writeText` 写用户选择目录，不允许UI提供任意磁盘路径。
 
@@ -41,8 +41,9 @@
  queue: Array<{id:string,name:string,width:number,height:number,bytes:number,status:'pending'|'running'|'completed'|'failed'|'cancelled',error:string|null}>,
  activeId:string|null,
  result: Result|null,
- history: Array<{id:string,name:string,modelId:string,createdAt:string,status:string,complete:boolean,preview:string}>,
- persistenceError:string|null
+ history: Array<{id:string,name:string,preview:string}>,
+ persistenceError:string|null, needsRefresh:boolean,
+ exporting:boolean, exportMessage:string|null
 }
 type Result = {
  id:string,name:string,backend:'openai'|'nexa',modelId:string,createdAt:string,
@@ -50,9 +51,14 @@ type Result = {
  text:string,complete:boolean,error:string|null,requestId:string|null,
  finishReason:string|null,usage:object|null,performance:object|null, elapsedMs:number
 }
+type HistoryResult = {id:string,name:string,text:string}
 ```
 
-通用模式没有统一阶段计时，performance=null；可选Nexa适配器使用原始PerformanceRecord（performance.timings含prepare_us/prefill_us/decode_us/output_callback_us，外层timings为queue_ms/load_ms/execution_ms），不把页面计时冒充引擎指标。无数据写null。只有匹配实例+request ID的记录可附加。历史只保存最多100条非空结果，图片/令牌不保存。文本总上限单条1MiB，历史总上限16MiB；写入失败要提示并暂停批次，不能假称已保存。
+通用模式没有统一阶段计时，performance=null；可选Nexa适配器使用原始PerformanceRecord（performance.timings含prepare_us/prefill_us/decode_us/output_callback_us，外层timings为queue_ms/load_ms/execution_ms），不把页面计时冒充引擎指标。无数据写null。只有匹配实例+request ID的记录可附加。
+
+历史只保存最近100条非空HistoryResult：内部id、原文件名name、正文text；不保存原图、令牌、模型、时间、性能或完整性状态。文本总上限单条1MiB，历史总上限16MiB；写入失败要提示并暂停批次，不能假称已保存。旧schema 1历史读取保留id/name/text，下次写入转换为精简形状；部分识别正文仍保存，历史窗口不将其标为完整成功。
+
+Snapshot.queue始终是实际FIFO执行顺序；renderer以倒序显示、原index+1编号。历史dialog维护独立选中ID/视图/异步请求序号，查看或关闭不改变当前结果和队列。编译期完整接口见[shared/contracts.ts](shared/contracts.ts)，运行时验证仍在各入口执行。
 
 `ocr.export`快速返回`{started:true}`，主进程后台弹目录窗口、写入新名字的Markdown，结果放snapshot的`exporting:boolean`与`exportMessage:string|null`。
 

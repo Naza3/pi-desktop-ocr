@@ -1,7 +1,7 @@
-import { Store } from './store.mjs';
-import { Controller } from './controller.mjs';
+import { Store } from './store.ts';
+import { Controller } from './controller.ts';
 
-let controller;
+let controller: Controller | undefined;
 export async function onLoad() {
   try {
     const dataPath = await pi.plugin.getDataPath();
@@ -12,7 +12,7 @@ export async function onLoad() {
   }
   await pi.commands.register({ id: 'ocr.open', title: 'PI Desktop OCR：打开图片识别', keywords: ['OCR', '图片', '识别'], run: () => pi.ui.openPanel({ title: '图片识别' }) });
 }
-export async function onPanelInvoke(channel, payload) {
+export async function onPanelInvoke(channel: string, payload: unknown) {
   if (!controller) throw new Error('插件仍在初始化，请稍后再试。');
   return controller.invoke(channel, payload ?? {});
 }

@@ -1,16 +1,27 @@
 import http from 'node:http';
 import { randomUUID } from 'node:crypto';
+import type { BackendClient, BackendModel, ClientOptions, ConnectResult, RecognizeInput, RecognizeOptions, RecognitionResult, Usage } from '../shared/contracts.ts';
+
+interface RequestScope { response: Promise<http.IncomingMessage>; close(): void }
+interface ErrorDetails { status?: number; partialResult?: RecognitionResult; cleanupConfirmed?: boolean; cleanupError?: string }
+const array = (value: unknown): value is unknown[] => Array.isArray(value);
+const oneOf = <const T>(value: unknown, choices: readonly T[]): value is T => choices.some(choice => choice === value);
 
 const JSON_LIMIT = 4 * 1024 * 1024;
 const TEXT_LIMIT = 1024 * 1024;
 const FRAME_LIMIT = 128 * 1024;
 const WIRE_LIMIT = 32 * 1024 * 1024;
-const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
-const natural = (value) => Number.isSafeInteger(value) && value >= 0;
-const validModel = (value) => typeof value === 'string' && value.length <= 256 && /^[^\s\x00-\x1f\x7f]+$/u.test(value);
+const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
+const natural = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+const validModel = (value: unknown): value is string => typeof value === 'string' && value.length <= 256 && /^[^\s\x00-\x1f\x7f]+$/u.test(value);
 
 export class OpenAIError extends Error {
-  constructor(code, message, details = {}) {
+  declare code: string;
+  declare status?: number;
+  declare partialResult?: RecognitionResult;
+  declare cleanupConfirmed?: boolean;
+  declare cleanupError?: string;
+  constructor(code: string, message: string, details: ErrorDetails = {}) {
     super(message);
     this.name = 'OpenAIError';
     this.code = code;
@@ -19,21 +30,22 @@ export class OpenAIError extends Error {
 }
 
 const invalid = (message = 'OCR 服务返回的数据格式无效。') => new OpenAIError('invalid_response', message);
-function aborted(signal) {
-  if (signal?.reason instanceof OpenAIError) return signal.reason;
-  if (signal?.reason?.code === 'persistence_failed') return new OpenAIError('persistence_failed', '识别结果保存失败，已断开本次请求。');
+function aborted(signal?: AbortSignal) {
+  const reason: unknown = signal?.reason;
+  if (reason instanceof OpenAIError) return reason;
+  if (object(reason) && reason.code === 'persistence_failed') return new OpenAIError('persistence_failed', '识别结果保存失败，已断开本次请求。');
   return new OpenAIError('request_cancelled', '已断开识别请求；通用 API 无法确认服务端任务已停止。');
 }
-function checkAbort(signal) { if (signal?.aborted) throw aborted(signal); }
-function safeError(error, signal) {
+function checkAbort(signal?: AbortSignal) { if (signal?.aborted) throw aborted(signal); }
+function safeError(error: unknown, signal?: AbortSignal) {
   if (error instanceof OpenAIError) return error;
   if (signal?.aborted) return aborted(signal);
   // Native errors can include caller-controlled paths, headers, or response bytes.
   return new OpenAIError('connection_failed', '无法连接 OCR 服务，或连接已中断；请检查本机服务。');
 }
-function httpError(status) {
-  if (status >= 300 && status < 400) return new OpenAIError('redirect_refused', 'OCR 服务要求重定向；请直接填写本机 API 地址。', { status });
-  const messages = {
+function httpError(status: number | undefined) {
+  if (status !== undefined && status >= 300 && status < 400) return new OpenAIError('redirect_refused', 'OCR 服务要求重定向；请直接填写本机 API 地址。', { status });
+  const messages: Record<number, [string, string]> = {
     400: ['invalid_request', 'OCR 服务拒绝了请求，请检查模型、图片、提示词及输出 token 预算。'],
     401: ['invalid_api_key', 'API 密钥无效，请检查服务的认证设置。'],
     403: ['access_denied', 'OCR 服务拒绝访问，请检查 API 密钥及服务权限。'],
@@ -41,17 +53,17 @@ function httpError(status) {
     413: ['image_too_large', 'OCR 服务拒绝了过大的请求，请缩小图片后再试。'],
     429: ['service_busy', 'OCR 服务正忙或已达到请求限额，请稍后重试。'],
   };
-  const [code, message] = messages[status] ?? ['api_error', `OCR 服务请求失败（HTTP ${Number.isInteger(status) ? status : '未知'}）。`];
+  const [code, message] = (status === undefined ? undefined : messages[status]) ?? ['api_error', `OCR 服务请求失败（HTTP ${Number.isInteger(status) ? status : '未知'}）。`];
   return new OpenAIError(code, message, { status });
 }
-function budget(seconds, parent) {
+function budget(seconds: number, parent?: AbortSignal) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(new OpenAIError('client_timeout', '等待 OCR 服务超时，已断开请求；无法确认服务端任务已停止，已有内容可能不完整。')), seconds * 1000);
   timer.unref?.();
   return { signal: parent ? AbortSignal.any([parent, controller.signal]) : controller.signal, close: () => clearTimeout(timer) };
 }
 
-export function normalizeOpenAIBaseUrl(value) {
+export function normalizeOpenAIBaseUrl(value: unknown) {
   // Match before URL parsing: integer IPs, credentials, encoded paths, queries,
   // and implicit ports must never broaden the plugin's loopback permission.
   const match = typeof value === 'string' && /^http:\/\/(?:127\.0\.0\.1|localhost):([1-9][0-9]{0,4})(?:\/v1)?\/?$/.exec(value);
@@ -60,21 +72,23 @@ export function normalizeOpenAIBaseUrl(value) {
   return `http://127.0.0.1:${Number(match[1])}/v1`;
 }
 
-function contentType(response, expected) {
+function contentType(response: http.IncomingMessage, expected: string) {
   const values = [];
   for (let i = 0; i < response.rawHeaders.length; i += 2) {
     if (response.rawHeaders[i].toLowerCase() === 'content-type') values.push(response.rawHeaders[i + 1]);
   }
   return values.length === 1 && values[0].split(';')[0].trim().toLowerCase() === expected;
 }
-function parseJson(bytes) {
+function parseJson(bytes: Uint8Array): unknown {
   try { return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)); }
   catch { throw invalid(); }
 }
-async function collect(response, signal) {
-  const chunks = [];
+async function collect(response: http.IncomingMessage, signal?: AbortSignal) {
+  const chunks: Buffer[] = [];
   let length = 0;
-  for await (const chunk of response) {
+  for await (const received of response) {
+    const chunk: unknown = received;
+    if (!Buffer.isBuffer(chunk)) throw invalid();
     checkAbort(signal);
     length += chunk.length;
     if (length > JSON_LIMIT) throw new OpenAIError('response_too_large', 'OCR 服务响应超过插件的 4 MiB 上限。');
@@ -83,13 +97,13 @@ async function collect(response, signal) {
   if (!response.complete) throw invalid('OCR 服务响应未完整接收。');
   return Buffer.concat(chunks);
 }
-function usageFrom(value, maxTokens) {
-  if (!object(value) || !['prompt_tokens', 'completion_tokens', 'total_tokens'].every((key) => natural(value[key]))
+function usageFrom(value: unknown, maxTokens: number): Usage {
+  if (!object(value) || !natural(value.prompt_tokens) || !natural(value.completion_tokens) || !natural(value.total_tokens)
     || value.completion_tokens > maxTokens || !Number.isSafeInteger(value.prompt_tokens + value.completion_tokens)
     || value.total_tokens !== value.prompt_tokens + value.completion_tokens) throw invalid('OCR 服务返回了无效的 token 用量。');
   return { prompt_tokens: value.prompt_tokens, completion_tokens: value.completion_tokens, total_tokens: value.total_tokens };
 }
-function validateInput(input) {
+function validateInput(input: RecognizeInput) {
   if (!object(input)) throw new OpenAIError('invalid_request', 'OCR 请求参数无效。');
   const { modelId, imageDataUrl, prompt, maxTokens } = input;
   if (!validModel(modelId)) throw new OpenAIError('invalid_model', '请填写有效的模型 ID（最多 256 个字符，不含空白）。');
@@ -104,10 +118,13 @@ function validateInput(input) {
 }
 
 /** Bounded, non-retrying OpenAI-compatible requests to an explicitly chosen local server. */
-export class OpenAIClient {
-  #token;
+export class OpenAIClient implements BackendClient {
+  declare baseUrl: string;
+  declare timeoutSeconds: number;
+  declare instanceId: null;
+  #token: string;
   #active = false;
-  constructor({ baseUrl = 'http://127.0.0.1:8080/v1', token = '', timeoutSeconds = 1800 } = {}) {
+  constructor({ baseUrl = 'http://127.0.0.1:8080/v1', token = '', timeoutSeconds = 1800 }: Partial<ClientOptions> = {}) {
     this.baseUrl = normalizeOpenAIBaseUrl(baseUrl);
     if (typeof token !== 'string' || token.length > 4096 || !/^[\x20-\x7e]*$/.test(token)) throw new OpenAIError('invalid_token', 'API 密钥必须不超过 4096 个可打印 ASCII 字符，且不能包含换行。');
     if (!Number.isInteger(timeoutSeconds) || timeoutSeconds < 1 || timeoutSeconds > 86400) throw new OpenAIError('invalid_timeout', '等待超时必须为 1–86400 秒。');
@@ -116,13 +133,13 @@ export class OpenAIClient {
     this.instanceId = null;
   }
 
-  #request(method, path, data, signal) {
+  #request(method: string, path: string, data: unknown, signal?: AbortSignal): RequestScope {
     checkAbort(signal);
     const url = new URL(this.baseUrl);
     const bytes = data === undefined ? undefined : Buffer.from(JSON.stringify(data));
-    if (bytes?.length > 6 * 1024 * 1024) throw new OpenAIError('request_too_large', 'OCR 请求超过插件的 6 MiB 上限。');
-    let request;
-    const response = new Promise((resolve, reject) => {
+    if (bytes && bytes.length > 6 * 1024 * 1024) throw new OpenAIError('request_too_large', 'OCR 请求超过插件的 6 MiB 上限。');
+    let request: http.ClientRequest | undefined;
+    const response = new Promise<http.IncomingMessage>((resolve, reject) => {
       request = http.request({
         hostname: '127.0.0.1', port: Number(url.port) || 80, method, path: `/v1${path}`,
         agent: false, maxHeaderSize: 16 * 1024,
@@ -132,7 +149,7 @@ export class OpenAIClient {
           ...(bytes ? { 'Content-Type': 'application/json', 'Content-Length': bytes.length } : {}),
         },
       });
-      const onAbort = () => request.destroy(aborted(signal));
+      const onAbort = () => request?.destroy(aborted(signal));
       signal?.addEventListener('abort', onAbort, { once: true });
       request.once('close', () => signal?.removeEventListener('abort', onAbort));
       request.once('error', reject);
@@ -143,19 +160,19 @@ export class OpenAIClient {
     return { response, close: () => request?.destroy() };
   }
 
-  async connect({ signal } = {}) {
+  async connect({ signal }: { signal?: AbortSignal } = {}): Promise<ConnectResult> {
     const scope = budget(Math.min(30, this.timeoutSeconds), signal);
-    let connection;
+    let connection: RequestScope | undefined;
     try {
       connection = this.#request('GET', '/models', undefined, scope.signal);
       const response = await connection.response;
-      let models = [];
-      if (![404, 405].includes(response.statusCode)) {
+      let models: BackendModel[] = [];
+      if (!oneOf(response.statusCode, [404, 405])) {
         if (response.statusCode !== 200) throw httpError(response.statusCode);
         if (!contentType(response, 'application/json')) throw invalid('模型列表接口未返回 JSON。');
         const value = parseJson(await collect(response, scope.signal));
-        if (!object(value) || !Array.isArray(value.data) || value.data.length > 4096) throw invalid('模型列表格式无效或数量超过限制。');
-        const seen = new Set();
+        if (!object(value) || !array(value.data) || value.data.length > 4096) throw invalid('模型列表格式无效或数量超过限制。');
+        const seen = new Set<string>();
         models = value.data.map((model) => {
           if (!object(model) || !validModel(model.id) || seen.has(model.id)) throw invalid('模型列表中存在无效或重复的模型 ID。');
           seen.add(model.id);
@@ -167,14 +184,15 @@ export class OpenAIClient {
     finally { connection?.close(); scope.close(); }
   }
 
-  async recognize(input, { signal, onDelta = () => {}, onPhase = () => {}, onRequest = () => {} } = {}) {
+  async recognize(input: RecognizeInput, { signal, onDelta = () => {}, onPhase = () => {}, onRequest = () => {} }: RecognizeOptions = {}): Promise<RecognitionResult> {
     if (this.#active) throw new OpenAIError('runtime_busy', '已有识别请求正在运行，请等待结束或先停止。');
     validateInput(input);
     const { modelId, imageDataUrl, prompt, maxTokens } = input;
     this.#active = true;
     const scope = budget(this.timeoutSeconds, signal);
-    const partial = { instanceId: null, requestId: randomUUID(), text: '', complete: false, finishReason: null, usage: null, performance: null, cleanupConfirmed: true };
-    let connection, dispatched = false, rejected = false;
+    const partial: RecognitionResult & { requestId: string } = { instanceId: null, requestId: randomUUID(), text: '', complete: false, finishReason: null, usage: null, performance: null, cleanupConfirmed: true };
+    let connection: RequestScope | undefined;
+    let dispatched = false, rejected = false;
     try {
       checkAbort(scope.signal);
       onPhase('generating');
@@ -188,9 +206,10 @@ export class OpenAIClient {
       const response = await connection.response;
       if (response.statusCode !== 200) { rejected = true; throw httpError(response.statusCode); }
       if (!contentType(response, 'text/event-stream')) throw invalid('OCR 接口未返回 SSE 数据流，请检查服务是否支持流式图片输入。');
-      let finished = false, done = false, decoding = false, buffer = '', wireSize = 0, textBytes = 0, eventCount = 0, streamId;
+      let finished = false, done = false, decoding = false, buffer = '', wireSize = 0, textBytes = 0, eventCount = 0;
+      let streamId: string | undefined;
       const decoder = new TextDecoder('utf-8', { fatal: true });
-      const consume = (frame) => {
+      const consume = (frame: string) => {
         if (++eventCount > 100000) throw invalid('OCR 数据流事件数量超过限制。');
         const data = frame.split(/\r?\n/).filter((line) => line.startsWith('data:')).map((line) => line.slice(5).replace(/^ /, '')).join('\n');
         if (!data) return; // Heartbeats and standard SSE metadata are not generated text.
@@ -200,10 +219,10 @@ export class OpenAIClient {
           done = true;
           return;
         }
-        let value;
+        let value: unknown;
         try { value = JSON.parse(data); } catch { throw invalid(); }
-        if (value?.error) throw new OpenAIError('api_error', 'OCR 服务在识别过程中返回错误，已有内容可能不完整。');
-        if (!object(value) || !Array.isArray(value.choices) || value.choices.length > 1
+        if (object(value) && value.error) throw new OpenAIError('api_error', 'OCR 服务在识别过程中返回错误，已有内容可能不完整。');
+        if (!object(value) || !array(value.choices) || value.choices.length > 1
           || value.object !== undefined && value.object !== 'chat.completion.chunk') throw invalid();
         if (value.id !== undefined) {
           if (typeof value.id !== 'string' || value.id.length > 512 || !value.id || streamId !== undefined && streamId !== value.id) throw invalid('OCR 数据流标识发生变化。');
@@ -212,7 +231,7 @@ export class OpenAIClient {
         if (value.choices.length) {
           const choice = value.choices[0];
           if (finished || !object(choice) || choice.index !== 0 || !object(choice.delta)
-            || ![undefined, null, 'stop', 'length', 'content_filter'].includes(choice.finish_reason)) throw invalid('OCR 服务返回了重复终态或不支持的输出类型。');
+            || !oneOf(choice.finish_reason, [undefined, null, 'stop', 'length', 'content_filter'])) throw invalid('OCR 服务返回了重复终态或不支持的输出类型。');
           if (choice.delta.role !== undefined && choice.delta.role !== 'assistant' || choice.delta.tool_calls !== undefined || choice.delta.function_call !== undefined) throw invalid('OCR 服务返回了不支持的工具调用或角色。');
           if (choice.delta.content !== undefined && choice.delta.content !== null) {
             if (typeof choice.delta.content !== 'string') throw invalid();
@@ -238,7 +257,9 @@ export class OpenAIClient {
         }
         if (Buffer.byteLength(buffer) > FRAME_LIMIT) throw invalid('SSE 事件超过 128 KiB 上限。');
       };
-      for await (const chunk of response) {
+      for await (const received of response) {
+        const chunk: unknown = received;
+        if (!Buffer.isBuffer(chunk)) throw invalid();
         checkAbort(scope.signal);
         wireSize += chunk.length;
         if (wireSize > WIRE_LIMIT) throw new OpenAIError('response_too_large', 'OCR 数据流超过插件的 32 MiB 上限。');

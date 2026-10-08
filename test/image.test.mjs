@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { imageType, headerDimensions, outputDimensions, dataUrlBytes } from '../renderer/image.js';
+import { imageType, headerDimensions, outputDimensions, dataUrlBytes } from '../renderer/image.ts';
 
 function png(width, height) {
   const bytes = new Uint8Array(24);

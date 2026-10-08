@@ -7,7 +7,9 @@
 - 每个后端只在用户选择的本机地址通信；端点/后端变更不复用旧凭据，不打印密钥、图片或识别正文。
 - 停止不自动重放；OpenAI通用断连不宣称后端已停止。未提供性能指标时显示不可用。
 - 保留有限图片/输出预算、净化Markdown、最近100条历史和原子TOML写入。
-- 先在本地执行相关测试与生产打包/官方check，再推送并监控Linux/Windows CI。项目为跨平台JavaScript插件，不含Nexa Rust/原生EXE；不以本机Node测试冒充Windows宿主安装。
+- 先在本地执行严格类型检查、相关测试与生产打包/官方check，再推送并监控Linux/Windows CI。项目为TypeScript源码打包的跨平台JavaScript插件，不含Nexa Rust/原生EXE；不以本机Node测试冒充Windows宿主安装。
+- 主进程与renderer分别检查Node/DOM环境，共用shared/contracts.ts。保留外部HTTP/SSE/TOML及宿主输入的运行时验证；不以any、忽略检查或宽泛断言替代真实类型。负例类型测试允许有说明的@ts-expect-error。
+- 队列倒序仅用于显示，原编号与FIFO执行顺序保持；历史弹窗与实时输出选择独立。历史持久化只含内部ID、原文件名和文字，不含原图、凭据或性能。
 - 验证报告区分协议fixture、真实模型、PI官方子进程、浏览器和Windows完整宿主，不移用旧项目证据。
 - 精确暂存、中文提交；用户授权推送时再推送。不要自动创建tag/发布Release或合并其他项目。
 - 最多三个子代理，单文件单写入者；主代理整合与验收，不让子代理提交/派生。

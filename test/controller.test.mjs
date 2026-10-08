@@ -5,10 +5,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import { Store, MAX_TEXT_BYTES } from '../src/store.mjs';
-import { Controller } from '../src/controller.mjs';
-import { DEFAULTS, normalizeSettings } from '../src/settings.mjs';
-import { NexaError } from '../src/nexa-client.mjs';
+import { Store, MAX_TEXT_BYTES } from '../src/store.ts';
+import { Controller } from '../src/controller.ts';
+import { DEFAULTS, normalizeSettings } from '../src/settings.ts';
+import { NexaError } from '../src/nexa-client.ts';
+import { parse, stringify } from 'smol-toml';
 
 const TOKEN = 'a'.repeat(64);
 const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aG1sAAAAASUVORK5CYII=';
@@ -56,7 +57,9 @@ test('失败保存部分正文并暂停，继续仅处理未开始项', async t 
   const a = await image(controller); const b = await image(controller);
   await controller.invoke('ocr.start'); await controller.task;
   assert.deepEqual(controller.snapshot().queue.map(q => q.status), ['failed', 'pending']);
-  assert.equal(store.history[0].id, a); assert.equal(store.history[0].complete, false);
+  assert.equal(store.history[0].id, a); assert.equal(store.history[0].text, '部分结果');
+  assert.equal(controller.result.complete, false);
+  assert.deepEqual(Object.keys(store.history[0]).sort(), ['id', 'name', 'text']);
   await controller.invoke('ocr.start'); await controller.task;
   assert.equal(calls, 2); assert.equal(store.history[0].id, b);
 });
@@ -77,6 +80,46 @@ test('停止不占住panel调用；清理未确认时必须刷新才能继续', 
   await controller.task;
   assert.equal(store.history[0].text, '保留我');
   await assert.rejects(controller.invoke('ocr.start'), { code: 'cleanup_unconfirmed' });
+});
+
+test('结构化后端错误保留部分文字，不依赖特定客户端错误类', async t => {
+  const requestId = randomUUID();
+  const { controller, store } = await fixture(t, async () => {
+    throw Object.assign(new Error('请求已停止'), {
+      code: 'request_cancelled',
+      partialResult: { text: '没有逐字回调的部分文字', requestId, finishReason: 'length',
+        usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 },
+        cleanupConfirmed: false, id: 'forged-id', name: 'forged-name.png' },
+    });
+  });
+  const id = await image(controller, '原始名称.png');
+  await image(controller, '下一张.png');
+  await controller.invoke('ocr.start'); await controller.task;
+  assert.equal(controller.result.status, 'cancelled');
+  assert.equal(controller.result.requestId, requestId);
+  assert.equal(controller.result.finishReason, 'length');
+  assert.equal(controller.result.usage.completion_tokens, 2);
+  assert.equal(controller.needsRefresh, true);
+  assert.deepEqual(store.history, [{ id, name: '原始名称.png', text: '没有逐字回调的部分文字' }]);
+  assert.equal(controller.queue[1].status, 'pending');
+  await assert.rejects(controller.invoke('ocr.start'), { code: 'cleanup_unconfirmed' });
+});
+
+test('异常部分结果的超额正文与伪造指标不会覆盖有效流式输出', async t => {
+  const { controller, store } = await fixture(t, async (_input, hooks) => {
+    hooks.onDelta('有效输出');
+    throw Object.assign(new Error('异常响应'), { code: 'invalid_response', partialResult: {
+      text: 'x'.repeat(MAX_TEXT_BYTES + 1), requestId: 123, performance: { invalid: true },
+      usage: { prompt_tokens: -1, completion_tokens: 'invalid' }, complete: true,
+    } });
+  });
+  await image(controller);
+  await controller.invoke('ocr.start'); await controller.task;
+  assert.equal(store.history[0].text, '有效输出');
+  assert.equal(controller.result.complete, false);
+  assert.equal(controller.result.requestId, null);
+  assert.equal(controller.result.performance, null);
+  assert.equal(controller.result.usage, null);
 });
 
 test('宿主拒绝网络授权时不构造客户端也不发送认证', async t => {
@@ -148,14 +191,18 @@ test('设置TOML重启恢复，凭据默认不保存且显式取消记住会删�
   assert(!(await readdir(dir)).includes(leftover));
 });
 
-test('保留最近100条、同id检查点替换、异常退出部分记录不冒充完成', async t => {
+test('保留最近100条、同id检查点替换、重启后只恢复原名与文字', async t => {
   const { store, dir } = await fixture(t);
   for (let n = 0; n < 102; n++) await store.addResult(record({ name: `${n}.png` }));
   assert.equal(store.history.length, 100); assert.equal(store.history.at(-1).name, '2.png');
   const last = { ...store.history[0], status: 'running', complete: false, text: 'partial' };
   await store.addResult(last); assert.equal(store.history.length, 100);
   const restored = await new Store(dir).open();
-  assert.equal(restored.history[0].status, 'failed'); assert.equal(restored.history[0].text, 'partial');
+  assert.equal(restored.history[0].text, 'partial');
+  assert.deepEqual(Object.keys(restored.history[0]).sort(), ['id', 'name', 'text']);
+  const persisted = parse(await readFile(join(dir, 'history.toml'), 'utf8'));
+  assert.equal(persisted.results.length, 100);
+  assert(persisted.results.every(row => Object.keys(row).sort().join(',') === 'id,name,text'));
   assert.throws(() => store.addResult(record({ text: 'x'.repeat(MAX_TEXT_BYTES + 1) })), { code: 'invalid_history' });
 });
 
@@ -188,7 +235,53 @@ test('通用后端无需密钥或模型列表登记，手填视觉模型可识�
   assert.equal(controller.snapshot().capabilities.autoLoad, false);
   assert.equal(controller.snapshot().models[0].hasProjector, null);
   assert.equal(calls.find(c => c.modelId)?.modelId, 'Vendor/Vision-Model');
-  assert.equal(store.history[0].backend, 'openai');
+  assert.equal(controller.result.backend, 'openai');
+  assert.deepEqual(Object.keys(store.history[0]).sort(), ['id', 'name', 'text']);
+});
+
+test('历史持久化白名单只保留文字和原文件名，不写图片、模型、性能或凭据', async t => {
+  const { store, dir, controller } = await fixture(t);
+  const original = record({ name: '原始 图片.png', dataUrl: PNG, token: TOKEN, performance: { privateMetric: 12 } });
+  await store.addResult(original);
+  const expected = { id: original.id, name: original.name, text: original.text };
+  assert.deepEqual(store.history, [expected]);
+  const raw = await readFile(join(dir, 'history.toml'), 'utf8');
+  assert.deepEqual(parse(raw).results.map(row => ({ ...row })), [expected]);
+  assert(!raw.includes(PNG) && !raw.includes(TOKEN) && !raw.includes('privateMetric'));
+  const restored = await new Store(dir).open();
+  assert.deepEqual(restored.history, [expected]);
+  assert.deepEqual(await controller.invoke('ocr.result', { id: original.id }), expected);
+  assert.deepEqual(controller.snapshot().history, [{ id: original.id, name: original.name, preview: original.text.slice(0, 100) }]);
+});
+
+test('旧版完整历史兼容读取，下一次保存写成精简记录且不丢文字', async t => {
+  const { dir } = await fixture(t);
+  const old = record({ name: '旧记录.png', status: 'running', text: '上次已保存的部分文字' });
+  const withoutNulls = Object.fromEntries(Object.entries(old).filter(([, value]) => value !== null));
+  await writeFile(join(dir, 'history.toml'), stringify({ schema_version: 1, results: [withoutNulls] }));
+  const restored = await new Store(dir).open();
+  const expected = { id: old.id, name: old.name, text: old.text };
+  assert.deepEqual(restored.history, [expected]);
+  await restored.addResult(record({ name: '新记录.png' }));
+  const saved = parse(await readFile(join(dir, 'history.toml'), 'utf8'));
+  assert.deepEqual({ ...saved.results[1] }, expected);
+  assert(saved.results.every(row => Object.keys(row).sort().join(',') === 'id,name,text'));
+});
+
+test('清空图片队列后历史文字仍可查询导出，重启不恢复原图', async t => {
+  const { controller, store, dir, calls } = await fixture(t);
+  const id = await image(controller, '先导入.png');
+  await controller.invoke('ocr.start'); await controller.task;
+  await controller.invoke('ocr.queue', { action: 'clear' });
+  assert.equal(controller.snapshot().queue.length, 0);
+  await assert.rejects(controller.invoke('ocr.image.read', { id, offset: 0 }), { code: 'not_found' });
+  assert.deepEqual(await controller.invoke('ocr.result', { id }), { id, name: '先导入.png', text: '识别结果' });
+  await controller.invoke('ocr.export', { id }); await controller.exportTask;
+  assert.equal(calls.find(call => call.file).text, '识别结果');
+  assert(!controller.exportMessage.includes('不完整'));
+  const restored = await new Store(dir).open();
+  assert.deepEqual(restored.history, store.history);
+  assert.deepEqual((await readdir(dir)).sort(), ['history.toml', 'preferences.toml']);
 });
 
 test('切换服务或后端清除原凭据，显式新密钥只用于新目标', async t => {

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { setTimeout as delay } from 'node:timers/promises';
-import { OpenAIClient, OpenAIError, normalizeOpenAIBaseUrl } from '../src/openai-client.mjs';
+import { OpenAIClient, OpenAIError, normalizeOpenAIBaseUrl } from '../src/openai-client.ts';
 
 const INPUT = { modelId: 'Org/GLM-OCR:Q8_0', imageDataUrl: 'data:image/png;base64,iVBORw0KGgo=', prompt: 'Text Recognition:', maxTokens: 8192 };
 const USAGE = { prompt_tokens: 100, completion_tokens: 5, total_tokens: 105 };

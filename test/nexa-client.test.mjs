@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import { createHmac, randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import { NexaClient, NexaError, normalizeBaseUrl } from '../src/nexa-client.mjs';
+import { NexaClient, NexaError, normalizeBaseUrl } from '../src/nexa-client.ts';
 
 const TOKEN = '01'.repeat(32);
 const INSTANCE = 'd9a42717-5f5a-413e-8b1b-e56500584470';
@@ -289,7 +289,7 @@ test('length finish remains usable text with explicit incomplete marker', async 
   assert.equal(result.finishReason, 'length'); assert.equal(result.complete, false); assert.ok(result.text);
 });
 
-for (const kind of ['wrong-instance', 'other-request', 'duplicate-request', 'wrong-usage', 'negative-timing']) {
+for (const kind of ['wrong-instance', 'other-request', 'duplicate-request', 'wrong-usage', 'negative-timing', 'array-instance', 'array-request']) {
   test(`performance (${kind}) is unavailable instead of attached to the wrong output`, async (t) => {
     let id;
     const f = await fixture(t, async (_req, res, row) => {
@@ -297,6 +297,8 @@ for (const kind of ['wrong-instance', 'other-request', 'duplicate-request', 'wro
       if (row.path !== '/runtime/performance') return false;
       const snapshot = { instance_id: INSTANCE, capacity: 200, records: [record(id)] };
       if (kind === 'wrong-instance') snapshot.instance_id = randomUUID();
+      if (kind === 'array-instance') snapshot.instance_id = [INSTANCE];
+      if (kind === 'array-request') snapshot.records[0].request_id = [id];
       if (kind === 'other-request') snapshot.records[0].request_id = randomUUID();
       if (kind === 'duplicate-request') snapshot.records = [{ ...record(id), sequence: 2 }, record(id)];
       if (kind === 'wrong-usage') snapshot.records[0].usage.completion_tokens = 4;
@@ -305,6 +307,21 @@ for (const kind of ['wrong-instance', 'other-request', 'duplicate-request', 'wro
     });
     const result = await f.client.recognize(INPUT);
     assert.equal(result.complete, true); assert.equal(result.performance, null);
+  });
+}
+
+for (const field of ['active_request', 'generation']) {
+  test(`UUID field ${field} rejects arrays rather than coercing them to strings`, async t => {
+    const f = await fixture(t, async (_req, res, row) => {
+      if (field === 'active_request' && row.path === '/runtime/status') {
+        json(res, { ...READY, active_request: [randomUUID()] }); return true;
+      }
+      if (field === 'generation' && row.path.startsWith('/runtime/models?')) {
+        json(res, { object: 'list', data: [MODEL], next_after: null, generation: [GENERATION] }); return true;
+      }
+      return false;
+    });
+    await assert.rejects(f.client.connect(), { code: 'invalid_response' });
   });
 }
 

@@ -38,8 +38,8 @@
         <section class="card import-card" aria-labelledby="input-title">
           <div class="card-heading"><h2 id="input-title">图片队列 <span id="queue-count" class="count">0 / 20</span></h2><button id="clear-queue" class="text-button" type="button" disabled>清空</button></div>
           <div class="import-controls"><button id="import" class="import-button" type="button"><span aria-hidden="true">＋</span> 导入图片</button><input id="file-input" type="file" accept="image/png,image/jpeg,.png,.jpg,.jpeg" multiple hidden></div>
-          <p id="import-progress" class="hint" role="status">按选择顺序识别，最多 20 张；单张 PNG/JPEG ≤ 4 MiB。</p>
-          <ol id="queue" class="queue" aria-label="按导入顺序的图片队列"></ol>
+          <p id="import-progress" class="hint" role="status">新图片在顶部，编号为识别顺序；最多 20 张，单张 PNG/JPEG ≤ 4 MiB。</p>
+          <ol id="queue" class="queue" aria-label="图片队列，按识别编号执行，新图片显示在顶部"></ol>
           <div id="queue-empty" class="empty-small">导入图片后可预览、调整顺序</div>
           <details class="parameters" open>
             <summary>识别参数</summary>
@@ -63,12 +63,7 @@
       </aside>
 
       <section class="card output-card" aria-labelledby="output-title">
-        <div class="output-topline"><h2 id="output-title">识别结果</h2><button id="history-toggle" class="text-button" type="button" aria-expanded="false">最近记录 <span id="history-count">0</span></button></div>
-        <section id="history-panel" class="history-panel" aria-label="最近 100 条识别记录" hidden>
-          <div class="card-heading"><p class="hint">最近 100 条非空结果，保留部分输出</p><button id="history-close" class="text-button" type="button">收起</button></div>
-          <ul id="history-list" class="history-list"></ul>
-          <p id="history-empty" class="empty-small">还没有识别记录</p>
-        </section>
+        <div class="output-topline"><h2 id="output-title">识别结果</h2><button id="history-toggle" class="text-button" type="button" aria-expanded="false" aria-haspopup="dialog" aria-controls="history-panel">历史记录（<span id="history-count">0</span>）</button></div>
         <div class="result-toolbar"><div class="segmented" role="group" aria-label="结果视图"><button id="view-markdown" type="button" aria-pressed="true">Markdown 预览</button><button id="view-source" type="button" aria-pressed="false">原文</button></div><div class="result-actions"><button id="copy" type="button" disabled>复制</button><button id="export" type="button" disabled>另存为</button></div></div>
         <div class="result-heading"><p id="result-name" class="result-name">等待识别</p><span id="result-badge" class="badge" hidden></span><button id="return-live" class="text-button" type="button" hidden>返回当前识别</button></div>
         <p id="result-error" class="notice warning" hidden></p>
@@ -85,6 +80,20 @@
     </main>
     <footer class="page-footer">连接本机推理服务 · 关闭页面不停止识别，请使用停止按钮</footer>
   </div>
+  <dialog id="history-panel" class="history-dialog" aria-labelledby="history-title">
+    <div class="card-heading history-heading"><div><h2 id="history-title">历史识别记录</h2><p class="hint">最近 100 条，仅保存原文件名和识别文字；可能包含中断时保存的部分内容</p></div><button id="history-close" type="button" autofocus>关闭</button></div>
+    <p id="history-notice" class="notice" role="status" aria-live="polite" hidden></p>
+    <div class="history-workspace">
+      <aside class="history-sidebar" aria-label="历史记录列表"><ul id="history-list" class="history-list"></ul><p id="history-empty" class="empty-small">还没有识别记录</p></aside>
+      <section class="history-content" aria-label="历史识别文字">
+        <div class="result-toolbar"><div class="segmented" role="group" aria-label="历史结果视图"><button id="history-view-markdown" type="button" aria-pressed="true">Markdown 预览</button><button id="history-view-source" type="button" aria-pressed="false">原文</button></div><div class="result-actions"><button id="history-copy" type="button" disabled>复制</button><button id="history-export" type="button" disabled>另存为</button></div></div>
+        <div class="result-heading"><p id="history-result-name" class="result-name">选择一条历史记录</p></div>
+        <p id="history-result-empty" class="empty-small">选择左侧或上方的记录查看识别文字。历史记录只保存原文件名和文字，不保存图片。</p>
+        <article id="history-markdown-output" class="markdown-body" aria-label="历史 Markdown 识别结果" hidden></article>
+        <pre id="history-source-output" class="source-output" aria-label="历史识别原文" hidden></pre>
+      </section>
+    </div>
+  </dialog>
   <script type="module" src="app.js"></script>
 </body>
 </html>
