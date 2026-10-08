@@ -53,8 +53,11 @@ export class Store {
     await mkdir(this.directory, { recursive: true, mode: 0o700 });
     const prefs = await this.read('preferences.toml', 128 * 1024);
     if (prefs) {
-      const settings = Object.fromEntries(Object.entries(prefs.settings ?? {}));
-      this.settings = normalizeSettings(DEFAULTS, settings.backend ? settings : { ...settings, backend: 'nexa' });
+      const settings = prefs.settings ?? {};
+      const ui = prefs.ui ?? {};
+      if (!object(settings) || !object(ui) || Object.keys(ui).some(key => key !== 'previewMode' && key !== 'historyView')) throw fail('invalid_settings', '插件页面设置格式不正确，已保留原文件。');
+      const original = normalizeSettings(DEFAULTS, settings.backend ? settings : { ...settings, backend: 'nexa' });
+      this.settings = normalizeSettings(original, ui);
     }
     const history = await this.read('history.toml', MAX_HISTORY_BYTES + 4 * 1024 * 1024);
     if (history) {
@@ -96,7 +99,10 @@ export class Store {
     return this.serialize(async () => {
       if (settings.rememberToken && token) await this.atomic('credentials.toml', { schema_version: 1, api_token: token });
       else await this.clearCredentials();
-      await this.atomic('preferences.toml', { schema_version: 1, settings });
+      // Older versions reject unknown [settings] keys. Keep their table intact
+      // so rollback can still recover the prompt and recognition parameters.
+      const { previewMode, historyView, ...originalSettings } = settings;
+      await this.atomic('preferences.toml', { schema_version: 1, settings: originalSettings, ui: { previewMode, historyView } });
       this.settings = { ...settings }; this.token = token;
     });
   }

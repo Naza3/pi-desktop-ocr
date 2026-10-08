@@ -94,6 +94,10 @@ summary { cursor: pointer; font-weight: 550; font-size: 12px; }
 .icon-button { width: 24px; height: 26px; padding: 0; color: var(--ocr-muted); border-color: transparent; background: transparent; }
 .parameters { border-top: 1px solid var(--ocr-border); margin-top: 10px; padding-top: 12px; }
 .parameter-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; margin: 12px 0 8px; }
+.settings-save-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.settings-save-row .hint { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.settings-save-row button { flex-shrink: 0; white-space: nowrap; font-size: 11px; padding: 6px 9px; }
+#settings-status[data-state="error"], #parameter-settings-status[data-state="error"] { color: var(--ocr-danger); }
 .wide { grid-column: 1 / -1; }
 .run-controls { display: flex; gap: 8px; margin-top: 15px; }
 .run-controls .primary { flex: 1; }

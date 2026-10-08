@@ -3,9 +3,11 @@ export type Backend = 'openai' | 'nexa';
 export type ResultStatus = 'running' | 'completed' | 'failed' | 'cancelled';
 export type QueueStatus = 'pending' | ResultStatus;
 export type View = 'markdown' | 'text';
+export type PreviewMode = 'fit-width' | 'fit' | 'actual';
 export interface Settings {
   backend: Backend; baseUrl: string; modelId: string; prompt: string;
   maxTokens: number; timeoutSeconds: number; maxImageEdge: number; view: View;
+  previewMode: PreviewMode; historyView: View;
   autoLoad: boolean; rememberToken: boolean;
 }
 export interface Capabilities {

@@ -5,6 +5,7 @@ export const ENDPOINTS: Readonly<Record<Backend, string>> = Object.freeze({ open
 export const DEFAULTS: Readonly<Settings> = Object.freeze({
   backend: 'openai', baseUrl: ENDPOINTS.openai, modelId: '', prompt: 'Text Recognition:',
   maxTokens: 4096, timeoutSeconds: 1800, maxImageEdge: 0, view: 'markdown',
+  previewMode: 'fit-width', historyView: 'markdown',
   autoLoad: false, rememberToken: false,
 });
 export function fail(code: string, message: string): Error & { code: string } { return Object.assign(new Error(message), { code }); }
@@ -24,7 +25,7 @@ export function normalizeSettings(previous: Readonly<Settings>, patch: unknown):
   }
   const apiBase = normalizeOpenAIBaseUrl(next.baseUrl);
   const baseUrl = backend === 'nexa' ? new URL(apiBase).origin : apiBase;
-  const { modelId, prompt, maxTokens, timeoutSeconds, maxImageEdge, view, autoLoad, rememberToken } = next;
+  const { modelId, prompt, maxTokens, timeoutSeconds, maxImageEdge, view, previewMode, historyView, autoLoad, rememberToken } = next;
   if (typeof modelId !== 'string' || modelId.length > 256 || /[\s\x00-\x1f\x7f]/.test(modelId) || (backend === 'nexa' && modelId && !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(modelId))) throw fail('invalid_settings', '模型 ID 格式不正确，请填写服务提供的准确模型 ID。');
   if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > 16384 || Buffer.byteLength(prompt) > 32768) throw fail('invalid_settings', '提示词不能为空，且最多 16384 个字符 / 32 KiB。');
   const maxTokenLimit = backend === 'nexa' ? 4096 : 32768;
@@ -32,7 +33,9 @@ export function normalizeSettings(previous: Readonly<Settings>, patch: unknown):
   if (typeof timeoutSeconds !== 'number' || !Number.isInteger(timeoutSeconds) || timeoutSeconds < 30 || timeoutSeconds > 86400) throw fail('invalid_settings', 'timeoutSeconds 必须为 30–86400 的整数。');
   if (typeof maxImageEdge !== 'number' || !Number.isInteger(maxImageEdge) || (maxImageEdge !== 0 && (maxImageEdge < 256 || maxImageEdge > 8192))) throw fail('invalid_settings', '最长边应为 0（原图）或 256–8192。');
   if ((view !== 'markdown' && view !== 'text') || typeof autoLoad !== 'boolean' || typeof rememberToken !== 'boolean') throw fail('invalid_settings', '视图或开关设置不正确。');
-  return { backend, baseUrl, modelId, prompt, maxTokens, timeoutSeconds, maxImageEdge, view, autoLoad: backend === 'openai' ? false : autoLoad, rememberToken };
+  if (previewMode !== 'fit-width' && previewMode !== 'fit' && previewMode !== 'actual') throw fail('invalid_settings', '图片预览模式不正确。');
+  if (historyView !== 'markdown' && historyView !== 'text') throw fail('invalid_settings', '历史记录视图不正确。');
+  return { backend, baseUrl, modelId, prompt, maxTokens, timeoutSeconds, maxImageEdge, view, previewMode, historyView, autoLoad: backend === 'openai' ? false : autoLoad, rememberToken };
 }
 export function normalizeToken(token: unknown, backend: Backend = 'openai'): string {
   if (typeof token !== 'string' || token.length > 4096 || !/^[\x20-\x7e]*$/.test(token.trim())) throw fail('invalid_token', 'API 密钥最多4096个可打印ASCII字符，不能包含换行或控制字符。');

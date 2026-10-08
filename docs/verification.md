@@ -1,6 +1,6 @@
 # 独立项目验证记录
 
-最新任务：2026-10-08 接入GitHub自定义更新源，见[更新与验证说明](github-updates.md)。此前TypeScript迁移、队列倒序显示与精简历史弹窗见[迁移验证](typescript-migration.md)。以下保留独立项目初建时的历史证据，不代替最新源码验证。
+最新任务：2026-10-08 页面参数持久化与升级读取复查，见[保存说明](settings-persistence.md)。GitHub自定义更新源见[更新与验证说明](github-updates.md)，此前TypeScript迁移与历史弹窗见[迁移验证](typescript-migration.md)。以下保留独立项目初建时的历史证据，不代替最新源码验证。
 
 日期：2026-10-08（北京时间）。任务 PI-OCR-INITIAL。用户授权将插件独立为 `Naza3/pi-desktop-ocr`，改名、解除Nexa强制依赖并推送；随后要求增加1024/512/256缩放选项。
 

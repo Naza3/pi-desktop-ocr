@@ -240,7 +240,7 @@ export class Controller {
   }
   private readonly handlers: MutationHandlers = {
     'ocr.settings': async p => {
-      if (Object.keys(p.patch ?? {}).some(k => k !== 'view') || Object.hasOwn(p, 'token')) this.idle();
+      if (Object.keys(p.patch ?? {}).some(k => !['view', 'previewMode', 'historyView'].includes(k)) || Object.hasOwn(p, 'token')) this.idle();
       const settings = normalizeSettings(this.store.settings, p.patch ?? {});
       const endpointChanged = settings.baseUrl !== this.store.settings.baseUrl || settings.backend !== this.store.settings.backend;
       const token = Object.hasOwn(p, 'token') ? normalizeToken(p.token, settings.backend) : endpointChanged ? '' : this.store.token;

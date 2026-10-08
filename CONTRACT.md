@@ -4,14 +4,16 @@
 
 ## Settings
 
-`{backend:'openai', baseUrl:'http://127.0.0.1:8080/v1', modelId:'', prompt:'Text Recognition:', maxTokens:4096, timeoutSeconds:1800, maxImageEdge:0, view:'markdown', autoLoad:false, rememberToken:false}`。
+`{backend:'openai', baseUrl:'http://127.0.0.1:8080/v1', modelId:'', prompt:'Text Recognition:', maxTokens:4096, timeoutSeconds:1800, maxImageEdge:0, view:'markdown', previewMode:'fit-width', historyView:'markdown', autoLoad:false, rememberToken:false}`。
+
+`previewMode`仅允许`fit-width | fit | actual`；`historyView`与`view`均为`markdown | text`，二者独立。新增的`previewMode`与`historyView`落盘到`preferences.toml`的`[ui]`表，旧`[settings]`字段不变。读取旧文件只补缺失字段，非法UI字段拒绝读取并保留原文件；保存时保留原有自定义提示词及其他参数。回退旧版时仍能解析原`[settings]`，但旧版再次保存可能不保留新增`[ui]`。
 
 `maxImageEdge` 为0（原图）或256..8192整数；`timeoutSeconds`为30..86400；maxTokens在OpenAI兼容模式为1..32768，Nexa模式为1..4096；服务实际容量独立。凭据不放进settings/snapshot/history，`ocr.settings`中单独提供token（通用模式可空、≤4096可打印ASCII；Nexa为64位小写hex）。主进程只有显式rememberToken=true才写入插件私有credential文件，其他偏好TOML、history TOML；UI用`hasToken`布尔状态，不回显已保存的令牌。可用password输入框或用户主动选择纯文本密钥文件导入，不扫描或后台读取用户凭据目录。
 
 ## Bridge channels
 
 - `ocr.snapshot({})` -> Snapshot（下表）
-- `ocr.settings({patch,token?})` -> Snapshot。运行期间拒绝修改；省略token表示保持，显式空token或`ocr.clearToken`表示清除；端点或后端变更时省略token也清除旧凭据，明确的新token只用于新端点。
+- `ocr.settings({patch,token?})` -> Snapshot。运行期间只允许修改`view`、`previewMode`、`historyView`；其他参数及凭据仍要求空闲。省略token表示保持，显式空token或`ocr.clearToken`表示清除；端点或后端变更时省略token也清除旧凭据，明确的新token只用于新端点。
 - `ocr.clearToken({})` -> Snapshot。
 - `ocr.connect({})` -> `{started:true}`，后台连接后snapshot更新；需先保存设置。
 - `ocr.image.begin({name,width,height,bytes,mimeType,dataLength})` -> `{uploadId}`。PNG/JPEG、≤4MiB、8192边、≤16777216像素；一次一个暂存上传，dataLength≤5600000。

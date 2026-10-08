@@ -54,9 +54,10 @@ const controls = {
   rememberToken: inputElement("remember-token"), autoLoad: inputElement("auto-load"),
 };
 type ControlKey = keyof typeof controls;
-type DirtyKey = ControlKey | "view";
+type DirtyKey = ControlKey | "view" | "previewMode" | "historyView";
 const controlKeys: readonly ControlKey[] = ["backend", "baseUrl", "modelId", "prompt", "maxTokens", "timeoutSeconds", "maxImageEdge", "rememberToken", "autoLoad"];
 const booleanFields = new Set<ControlKey>(["rememberToken", "autoLoad"]);
+const displayFields = new Set<DirtyKey>(["view", "previewMode", "historyView"]);
 const dirty = new Set<DirtyKey>();
 const statuses = { pending: "待识别", running: "识别中", completed: "已完成", cancelled: "已停止", failed: "失败" };
 const phases: Record<string, string> = { idle: "准备就绪", connecting: "正在连接本机服务…", checking_model: "正在检查模型状态…", switching_model: "正在切换所选模型…", loading: "正在加载模型，CPU 首次加载可能需要一些时间…", testing: "正在测试连接…", prefill: "正在编码图片与处理输入…", decode: "正在生成识别文本…", finished: "本张识别已结束", generating: "正在识别…", running: "正在识别…", preparing: "正在准备图片…", stopping: "正在停止并保存已有输出…", saving: "正在保存结果…", performance: "正在读取性能指标…" };
@@ -65,10 +66,10 @@ let selectedQueueId: string | null = null;
 let selection: ResultSelection = { kind: "live", id: null };
 let selectedResult: DisplayResult | null = null;
 let view: Settings["view"] = "markdown";
-let previewMode = "fit-width";
+let previewMode: Settings["previewMode"] = "fit-width";
 let selectedHistoryId: string | null = null;
 let selectedHistory: HistoryResult | null = null;
-let historyView: Settings["view"] = "markdown";
+let historyView: Settings["historyView"] = "markdown";
 let historyEpoch = 0;
 let lastHistoryResultKey = "";
 let historyLoading = false;
@@ -83,13 +84,19 @@ let epoch = 0;
 let resultEpoch = 0;
 let previewEpoch = 0;
 let tokenDirty = false;
-let settingsInitialized = false;
 let lastQueueKey = "";
 let lastHistoryKey = "";
 let lastResultKey = "";
 let connectedOnce = false;
 let lastExportMessage: string | null = null;
-let deferredViewSave = false;
+let lastSettingsError: string | null = null;
+
+function setSettingsStatus(text: string, state: "loading" | "pending" | "saving" | "saved" | "error"): void {
+  for (const id of ["settings-status", "parameter-settings-status"]) {
+    $(id).textContent = text;
+    $(id).dataset.state = state;
+  }
+}
 
 function notice(message: string, error = false): void {
   $("notice").textContent = message || "";
@@ -117,20 +124,23 @@ async function copyText(text: string): Promise<void> {
 
 function applySnapshot(value: Snapshot): void {
   if (!value?.settings || !Array.isArray(value.queue)) return;
+  const initializing = !snapshot;
   snapshot = value;
   for (const key of controlKeys) {
     const input = controls[key];
-    if (dirty.has(key) || document.activeElement === input) continue;
+    if (dirty.has(key) || !initializing && document.activeElement === input) continue;
     if (key === "rememberToken" || key === "autoLoad") controls[key].checked = !!value.settings[key];
     else if (key !== "modelId") {
       if (key === "maxImageEdge" && ![...controls.maxImageEdge.options].some((option) => option.value === String(value.settings[key]))) controls.maxImageEdge.append(new Option(`${value.settings[key]} 像素`, String(value.settings[key])));
       input.value = String(value.settings[key] ?? "");
     }
   }
-  if (!settingsInitialized) {
-    view = value.settings.view || "markdown";
-    settingsInitialized = true;
-  }
+  if (!dirty.has("view")) view = value.settings.view;
+  if (!dirty.has("historyView")) historyView = value.settings.historyView;
+  if (!dirty.has("previewMode")) previewMode = value.settings.previewMode;
+  selectElement("preview-mode").value = previewMode;
+  $("preview-area").className = `preview-area ${previewMode}`;
+  if (initializing) setSettingsStatus("已读取保存的设置；修改后自动保存。", "saved");
   renderBackend();
   renderModels();
   if (!value.queue.some((item) => item.id === selectedQueueId)) {
@@ -139,7 +149,6 @@ function applySnapshot(value: Snapshot): void {
   }
   for (const id of imageCache.keys()) if (!value.queue.some((item) => item.id === id)) imageCache.delete(id);
   render();
-  if (!value.busy && deferredViewSave) { deferredViewSave = false; scheduleSave(); }
 }
 
 async function poll(): Promise<void> {
@@ -176,44 +185,57 @@ const fieldReaders: { [K in DirtyKey]: () => Settings[K] } = {
   rememberToken: () => controls.rememberToken.checked,
   autoLoad: () => controls.autoLoad.checked,
   view: () => view,
+  previewMode: () => previewMode,
+  historyView: () => historyView,
 };
 function fieldValue<K extends DirtyKey>(key: K): Settings[K] { return fieldReaders[key](); }
 function readPatchField<K extends DirtyKey>(patch: Partial<Settings>, key: K): void { patch[key] = fieldValue(key); }
 
 async function flushSettings() {
   clearTimeout(saveTimer);
-  if (saving) await saving;
+  if (saving) return saving;
   if (!dirty.size && !tokenDirty) return;
-  if (snapshot?.busy) throw new Error("识别运行期间不能修改设置，请先停止。");
-  const keys = [...dirty];
-  const patch: Partial<Settings> = {};
-  for (const key of keys) readPatchField(patch, key);
-  const token = tokenDirty ? inputElement("token").value.trim() : undefined;
-  if (token) validateToken(token);
-  $("settings-status").textContent = "正在保存设置…";
-  epoch++;
-  saving = invoke("ocr.settings", { patch, ...(tokenDirty ? { token } : {}) }).then((value) => {
-    for (const key of keys) {
-      const current = key === "view" ? view : fieldValue(key);
-      if (current === patch[key]) dirty.delete(key);
+  saving = (async () => {
+    while (dirty.size || tokenDirty) {
+      if (!snapshot) throw new Error("设置尚未读取完成，请稍后重试。");
+      const keys = [...dirty];
+      if (snapshot.busy && (tokenDirty || keys.some(key => !displayFields.has(key)))) throw new Error("识别运行期间不能修改识别设置，请先停止。");
+      const patch: Partial<Settings> = {};
+      for (const key of keys) readPatchField(patch, key);
+      const token = tokenDirty ? inputElement("token").value.trim() : undefined;
+      if (token) validateToken(token);
+      setSettingsStatus("正在保存设置…", "saving");
+      epoch++;
+      const value = await invoke("ocr.settings", { patch, ...(tokenDirty ? { token } : {}) });
+      // A poll begun during the write can contain the previous settings. Reject
+      // it even when its reply arrives after this successful acknowledgement.
+      epoch++;
+      for (const key of keys) {
+        try { if (fieldValue(key) === patch[key]) dirty.delete(key); }
+        catch { /* An input edited to an invalid value still needs attention. */ }
+      }
+      if (inputElement("token").value.trim() === token) {
+        inputElement("token").value = "";
+        tokenDirty = false;
+      }
+      applySnapshot(value);
     }
-    if (inputElement("token").value.trim() === token) {
-      inputElement("token").value = "";
-      tokenDirty = false;
-    }
-    applySnapshot(value);
-    $("settings-status").textContent = value.persistenceError || "设置已保存为 TOML；图片和待运行队列不会写入磁盘。";
-  }).catch((error) => {
-    $("settings-status").textContent = `设置尚未保存：${message(error)}`;
+    setSettingsStatus("设置已保存，重启后保留。", "saved");
+    if (lastSettingsError && $("notice").textContent === lastSettingsError) notice("");
+    lastSettingsError = null;
+  })().catch((error) => {
+    lastSettingsError = message(error);
+    setSettingsStatus(`设置尚未保存：${lastSettingsError}`, "error");
     throw error;
-  }).finally(() => { saving = null; });
-  await saving;
-  if (dirty.size || tokenDirty) await flushSettings();
+  }).finally(() => { saving = null; renderControls(); });
+  renderControls();
+  return saving;
 }
 
 function scheduleSave() {
   clearTimeout(saveTimer);
-  $("settings-status").textContent = "设置有修改，正在等待自动保存…";
+  setSettingsStatus("设置有修改，正在等待自动保存…", "pending");
+  renderControls();
   saveTimer = setTimeout(() => flushSettings().catch((error) => notice(message(error), true)), 650);
 }
 
@@ -230,6 +252,7 @@ type MutationChannel = "ocr.settings" | "ocr.clearToken" | "ocr.connect" | "ocr.
 async function mutate<C extends MutationChannel>(...args: InvokeArgs<C>): Promise<Reply<C>> {
   epoch++;
   const value = await invoke<C>(...args);
+  epoch++;
   if ("settings" in value) applySnapshot(value);
   return value;
 }
@@ -283,10 +306,16 @@ function renderModels() {
 
 function renderControls() {
   const busy = !!snapshot?.busy;
-  const locked = busy || importing || actionBusy;
+  const locked = !snapshot || busy || importing || actionBusy;
   for (const input of Object.values(controls)) input.disabled = locked;
   for (const element of [inputElement("token"), buttonElement("connect"), buttonElement("token-file-open"), controls.rememberToken, buttonElement("clear-token"), controls.autoLoad]) element.disabled = locked;
   buttonElement("clear-token").disabled ||= !snapshot?.hasToken;
+  const hasChanges = dirty.size > 0 || tokenDirty;
+  const hasInferenceChanges = tokenDirty || [...dirty].some(key => !displayFields.has(key));
+  buttonElement("save-settings").disabled = !snapshot || importing || actionBusy || !!saving || !hasChanges || busy && hasInferenceChanges;
+  buttonElement("save-settings").textContent = saving ? "正在保存…" : "保存设置";
+  selectElement("preview-mode").disabled = !snapshot;
+  for (const id of ["view-markdown", "view-source", "history-view-markdown", "history-view-source"]) buttonElement(id).disabled = !snapshot;
   buttonElement("import").disabled = locked || !snapshot || (snapshot.queue.length >= MAX_QUEUE);
   buttonElement("clear-queue").disabled = locked || !snapshot?.queue.length;
   const pending = snapshot?.queue.filter((item) => item.status === "pending").length || 0;
@@ -317,7 +346,7 @@ function render() {
   $("model-hint").textContent = backend() === "nexa"
     ? model ? `${model.name || model.id} · ${model.hasProjector ? "已配对 mmproj" : "尚未配对 mmproj"}。模型参数使用 Nexa 中保存的配置。` : "在 Nexa 登记主模型并配对 mmproj；可在下方启用开始识别时自动加载。"
     : "请在服务端加载支持图片输入的模型。模型列表不代表已验证图片识别能力，可手动填写模型 ID。";
-  if (snapshot.persistenceError) $("settings-status").textContent = `保存失败：${snapshot.persistenceError}`;
+  if (snapshot.persistenceError) notice(snapshot.persistenceError, true);
   if (snapshot.exportMessage && snapshot.exportMessage !== lastExportMessage) {
     lastExportMessage = snapshot.exportMessage;
     notice(snapshot.exportMessage);
@@ -639,7 +668,7 @@ function setHistoryOpen(open: boolean): void {
 }
 
 for (const key of controlKeys) {
-    const input = controls[key];
+  const input = controls[key];
   input.addEventListener(input.tagName === "SELECT" || booleanFields.has(key) ? "change" : "input", () => {
     dirty.add(key);
     if (key === "backend" || key === "baseUrl") {
@@ -662,8 +691,11 @@ for (const key of controlKeys) {
     }
     scheduleSave();
   });
+  input.addEventListener("blur", () => { if (dirty.size || tokenDirty) void flushSettings().catch(error => notice(message(error), true)); });
 }
 inputElement("token").addEventListener("input", () => { tokenDirty = true; scheduleSave(); });
+inputElement("token").addEventListener("blur", () => { if (dirty.size || tokenDirty) void flushSettings().catch(error => notice(message(error), true)); });
+buttonElement("save-settings").addEventListener("click", () => action(async () => { await flushSettings(); }));
 $("connection-form").addEventListener("submit", (event) => {
   event.preventDefault();
   void action(async () => { await flushSettings(); await mutate("ocr.connect"); notice("正在连接本机服务…"); void poll(); });
@@ -700,12 +732,16 @@ buttonElement("stop").addEventListener("click", async () => {
   }
   catch (error) { notice(message(error), true); }
 });
-selectElement("preview-mode").addEventListener("change", () => { previewMode = selectElement("preview-mode").value; $("preview-area").className = `preview-area ${previewMode}`; });
+selectElement("preview-mode").addEventListener("change", () => {
+  const next = selectElement("preview-mode").value;
+  if (next !== "fit-width" && next !== "fit" && next !== "actual") return;
+  previewMode = next;
+  $("preview-area").className = `preview-area ${previewMode}`;
+  dirty.add("previewMode"); scheduleSave();
+});
 for (const [id, next] of [["view-markdown", "markdown"], ["view-source", "text"]] as const) $(id).addEventListener("click", () => {
   view = next; renderResult(); renderControls();
-  dirty.add("view");
-  if (!snapshot?.busy) scheduleSave();
-  else deferredViewSave = true;
+  dirty.add("view"); scheduleSave();
 });
 buttonElement("history-toggle").addEventListener("click", () => setHistoryOpen(true));
 buttonElement("history-close").addEventListener("click", () => setHistoryOpen(false));
@@ -715,6 +751,7 @@ historyDialog().addEventListener("close", () => {
 });
 for (const [id, next] of [["history-view-markdown", "markdown"], ["history-view-source", "text"]] as const) buttonElement(id).addEventListener("click", () => {
   historyView = next; renderHistoryResult();
+  dirty.add("historyView"); scheduleSave();
 });
 buttonElement("history-copy").addEventListener("click", async () => {
   if (!selectedHistory?.text) return;
@@ -769,7 +806,8 @@ const appearanceTimer = setInterval(() => {
 }, 5000);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) void poll(); });
 window.addEventListener("pagehide", () => {
-  if (!snapshot?.busy && (dirty.size || tokenDirty)) void flushSettings().catch(() => {});
+  // Best effort only: host shutdown need not wait for asynchronous bridge calls.
+  if (dirty.size || tokenDirty) void flushSettings().catch(() => {});
   disposed = true; previewEpoch++; resultEpoch++; historyEpoch++;
   clearTimeout(pollTimer); clearTimeout(saveTimer); clearInterval(appearanceTimer);
   imageCache.clear();

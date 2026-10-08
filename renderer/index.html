@@ -27,7 +27,7 @@
         <p id="credential-hint" class="hint">密钥可选，默认仅本次运行使用；勾选记住后保存到插件私有目录。当前支持 127.0.0.1 本机服务。</p>
         <div class="model-grid"><label>模型 ID<input id="model-id" list="model-options" placeholder="输入模型 ID，或连接后选择" autocomplete="off" spellcheck="false"><datalist id="model-options"></datalist></label><p id="model-hint" class="hint">请在服务端加载支持图片输入的模型。模型列表不代表已验证图片识别能力，可手动填写模型 ID。</p></div>
         <label id="auto-load-option" class="checkbox-label" hidden><input id="auto-load" type="checkbox">开始识别时自动加载 / 空闲时切换所选模型</label>
-        <p id="settings-status" class="hint" role="status">设置自动保存为 TOML；图片和待运行队列不写入历史。</p>
+        <p id="settings-status" class="hint" role="status" data-state="loading">正在读取已保存的设置…</p>
       </div>
     </details>
 
@@ -51,6 +51,7 @@
             </div>
             <p class="hint">缩放只影响之后导入的图片；减少像素可能丢失小字。模型加载参数和服务端超时请在所用后端设置。</p>
           </details>
+          <div class="settings-save-row"><p id="parameter-settings-status" class="hint" role="status" data-state="loading">正在读取已保存的设置…</p><button id="save-settings" type="button" disabled>保存设置</button></div>
           <div class="run-controls"><button id="start" class="primary" type="button" disabled>开始识别</button><button id="stop" type="button" disabled>停止</button></div>
           <p id="run-status" class="hint" role="status">准备好模型和图片后开始</p>
         </section>
