@@ -1,0 +1,21 @@
+{
+  "name": "pi-desktop-ocr",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Backend-independent local OCR workbench for PI Desktop",
+  "repository": { "type": "git", "url": "https://github.com/Naza3/pi-desktop-ocr.git" },
+  "engines": { "node": ">=22.19.0" },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test test/*.test.mjs",
+    "check": "node scripts/upstream.mjs check",
+    "pack": "npm run build && node scripts/upstream.mjs pack"
+  },
+  "dependencies": {
+    "dompurify": "3.4.16",
+    "marked": "18.1.0",
+    "smol-toml": "1.9.0"
+  },
+  "devDependencies": { "esbuild": "0.28.2", "typescript": "5.9.3", "@types/node": "24.10.1" }
+}

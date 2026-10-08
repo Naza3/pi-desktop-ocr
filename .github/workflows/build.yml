@@ -1,0 +1,79 @@
+name: Build plugin
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: plugin-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  build:
+    name: Plugin / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1; node24
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0; node24
+        with:
+          node-version: '24.19.0'
+          cache: npm
+      - run: npm ci
+      - name: Check release version
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: node scripts/validate-version.mjs --tag "$RELEASE_TAG"
+      - run: npm test
+      - run: npm run pack
+      - run: npm run check
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2; node24
+        with:
+          archive: true
+          name: pi-desktop-ocr-${{ runner.os }}
+          path: |
+            dist/*.piplug
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2; node24
+        with:
+          name: pi-desktop-ocr-Linux
+          path: dist
+          digest-mismatch: error
+      - name: Verify and publish plugin
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          cd dist
+          sha256sum --check --strict *.sha256
+          gh release create "$RELEASE_TAG" *.piplug *.sha256 \
+            --verify-tag --title "PI Desktop OCR $RELEASE_TAG" \
+            --generate-notes

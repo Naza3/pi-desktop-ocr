@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="pi-plugin-chrome" content="v2">
+  <title>PI Desktop OCR</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app">
+    <header class="page-header">
+      <div class="brand"><span class="brand-icon" aria-hidden="true">文</span><div><h1>PI Desktop OCR</h1><p>本机图片识别 · Markdown 工作台</p></div></div>
+      <span id="connection-badge" class="badge">尚未连接</span>
+    </header>
+
+    <details id="connection-panel" class="card connection-panel" open>
+      <summary><span>连接与模型</span><span id="connection-summary" class="muted">连接本机 OCR 服务</span></summary>
+      <div class="connection-content">
+        <form id="connection-form" class="connection-grid">
+          <label>后端类型<select id="backend" name="backend"><option value="openai">OpenAI 兼容服务</option><option value="nexa">Nexa</option></select></label>
+          <label>本机 API 地址<input id="base-url" name="baseUrl" type="url" placeholder="http://127.0.0.1:8080/v1" autocomplete="off" spellcheck="false" required></label>
+          <label>API 密钥<input id="token" name="token" type="password" placeholder="服务未设置密钥时可留空" autocomplete="off" spellcheck="false"></label>
+          <button id="connect" type="submit">连接 / 刷新</button>
+        </form>
+        <div class="credential-options"><button id="token-file-open" type="button" class="text-button">选择密钥文件</button><input id="token-file" type="file" hidden><label class="checkbox-label"><input id="remember-token" type="checkbox">在此插件记住密钥</label><button id="clear-token" type="button" class="text-button">清除密钥</button></div>
+        <p id="credential-hint" class="hint">密钥可选，默认仅本次运行使用；勾选记住后保存到插件私有目录。当前支持 127.0.0.1 本机服务。</p>
+        <div class="model-grid"><label>模型 ID<input id="model-id" list="model-options" placeholder="输入模型 ID，或连接后选择" autocomplete="off" spellcheck="false"><datalist id="model-options"></datalist></label><p id="model-hint" class="hint">请在服务端加载支持图片输入的模型。模型列表不代表已验证图片识别能力，可手动填写模型 ID。</p></div>
+        <label id="auto-load-option" class="checkbox-label" hidden><input id="auto-load" type="checkbox">开始识别时自动加载 / 空闲时切换所选模型</label>
+        <p id="settings-status" class="hint" role="status">设置自动保存为 TOML；图片和待运行队列不写入历史。</p>
+      </div>
+    </details>
+
+    <p id="notice" class="notice" role="status" aria-live="polite" hidden></p>
+
+    <main class="workspace">
+      <aside class="input-column">
+        <section class="card import-card" aria-labelledby="input-title">
+          <div class="card-heading"><h2 id="input-title">图片队列 <span id="queue-count" class="count">0 / 20</span></h2><button id="clear-queue" class="text-button" type="button" disabled>清空</button></div>
+          <div class="import-controls"><button id="import" class="import-button" type="button"><span aria-hidden="true">＋</span> 导入图片</button><input id="file-input" type="file" accept="image/png,image/jpeg,.png,.jpg,.jpeg" multiple hidden></div>
+          <p id="import-progress" class="hint" role="status">按选择顺序识别，最多 20 张；单张 PNG/JPEG ≤ 4 MiB。</p>
+          <ol id="queue" class="queue" aria-label="按导入顺序的图片队列"></ol>
+          <div id="queue-empty" class="empty-small">导入图片后可预览、调整顺序</div>
+          <details class="parameters" open>
+            <summary>识别参数</summary>
+            <div class="parameter-grid">
+              <label>最大输出 token<input id="max-output" type="number" min="1" max="32768" step="1" value="4096"></label>
+              <label>请求超时（秒）<input id="timeout" type="number" min="30" max="86400" step="1" value="1800"></label>
+              <label class="wide">导入时缩放最长边<select id="image-edge"><option value="0">原图（不缩放）</option><option value="256">256 像素</option><option value="512">512 像素</option><option value="1024">1024 像素</option><option value="2048">2048 像素</option><option value="3072">3072 像素</option><option value="4096">4096 像素</option><option value="6144">6144 像素</option></select></label>
+              <label class="wide">提示词<textarea id="prompt" rows="2" spellcheck="false">Text Recognition:</textarea></label>
+            </div>
+            <p class="hint">缩放只影响之后导入的图片；减少像素可能丢失小字。模型加载参数和服务端超时请在所用后端设置。</p>
+          </details>
+          <div class="run-controls"><button id="start" class="primary" type="button" disabled>开始识别</button><button id="stop" type="button" disabled>停止</button></div>
+          <p id="run-status" class="hint" role="status">准备好模型和图片后开始</p>
+        </section>
+
+        <section class="card preview-card" aria-labelledby="preview-title">
+          <div class="card-heading"><h2 id="preview-title">图片预览</h2><select id="preview-mode" aria-label="预览缩放"><option value="fit-width">适合宽度</option><option value="fit">完整图片</option><option value="actual">实际像素</option></select></div>
+          <div id="preview-area" class="preview-area fit-width"><p id="preview-empty" class="hint">选择队列中的图片查看预览</p><img id="preview-image" alt="" hidden></div>
+          <p id="preview-info" class="hint preview-info"></p>
+        </section>
+      </aside>
+
+      <section class="card output-card" aria-labelledby="output-title">
+        <div class="output-topline"><h2 id="output-title">识别结果</h2><button id="history-toggle" class="text-button" type="button" aria-expanded="false">最近记录 <span id="history-count">0</span></button></div>
+        <section id="history-panel" class="history-panel" aria-label="最近 100 条识别记录" hidden>
+          <div class="card-heading"><p class="hint">最近 100 条非空结果，保留部分输出</p><button id="history-close" class="text-button" type="button">收起</button></div>
+          <ul id="history-list" class="history-list"></ul>
+          <p id="history-empty" class="empty-small">还没有识别记录</p>
+        </section>
+        <div class="result-toolbar"><div class="segmented" role="group" aria-label="结果视图"><button id="view-markdown" type="button" aria-pressed="true">Markdown 预览</button><button id="view-source" type="button" aria-pressed="false">原文</button></div><div class="result-actions"><button id="copy" type="button" disabled>复制</button><button id="export" type="button" disabled>另存为</button></div></div>
+        <div class="result-heading"><p id="result-name" class="result-name">等待识别</p><span id="result-badge" class="badge" hidden></span><button id="return-live" class="text-button" type="button" hidden>返回当前识别</button></div>
+        <p id="result-error" class="notice warning" hidden></p>
+        <div id="result-empty" class="output-empty"><span class="empty-glyph" aria-hidden="true">文 → Md</span><p>让图片变成可编辑的文本</p><span>识别结果会显示在这里，性能摘要位于正文下方。</span></div>
+        <article id="markdown-output" class="markdown-body" aria-label="Markdown 识别结果" hidden></article>
+        <pre id="source-output" class="source-output" aria-label="识别原文" hidden></pre>
+        <section id="performance" class="performance" aria-label="本次推理性能" hidden>
+          <h3>本次推理性能 <span id="performance-status" class="muted"></span></h3>
+          <dl class="metrics"><div><dt>Prefill <span>含图片编码</span></dt><dd id="prefill-rate">不可用</dd><small id="prefill-time">耗时不可用</small></div><div><dt>Decode</dt><dd id="decode-rate">不可用</dd><small id="decode-time">耗时不可用</small></div><div><dt>输入 / 输出 token</dt><dd id="token-counts">不可用</dd><small id="execution-time">执行耗时不可用</small></div></dl>
+          <p id="elapsed-time" class="hint">本次总耗时不可用</p>
+          <p id="performance-note" class="hint">执行耗时不含排队与模型加载；缺失的指标不会估算为 0。</p>
+        </section>
+      </section>
+    </main>
+    <footer class="page-footer">连接本机推理服务 · 关闭页面不停止识别，请使用停止按钮</footer>
+  </div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

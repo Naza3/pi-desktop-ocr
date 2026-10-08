@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.naza3.pi-desktop-ocr",
+  "name": "PI Desktop OCR",
+  "version": "0.1.0",
+  "description": "连接本机 OpenAI 兼容视觉服务，按顺序识别图片并保存 Markdown、可用性能统计与历史结果。",
+  "author": "Naza3",
+  "main": "main.cjs",
+  "ui": {
+    "panel": "renderer/index.html",
+    "title": { "en": "PI Desktop OCR", "zh-CN": "图片识别" },
+    "width": 1180,
+    "height": 820
+  },
+  "contributes": {
+    "views": [{ "id": "ocr", "title": { "en": "OCR", "zh-CN": "图片识别" }, "icon": "image", "entry": "renderer/index.html", "order": 20 }],
+    "commands": [{ "id": "ocr.open", "title": "PI Desktop OCR：打开图片识别", "keywords": ["OCR", "图片", "识别", "Markdown"] }]
+  },
+  "permissions": ["ui.panel", "ui.view", "net.fetch", "clipboard.write", "fs.read", "fs.write"],
+  "net": { "domains": ["127.0.0.1"] },
+  "fs": { "write": { "root": "userSelected", "scope": ["*.md"] } },
+  "engines": { "piDesktop": ">=0.17.0" },
+  "activationEvents": ["onStartup", "onCommand:ocr.open"]
+}
