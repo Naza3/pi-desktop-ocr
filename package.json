@@ -11,7 +11,8 @@
     "build": "npm run typecheck && node scripts/build.mjs",
     "test": "node --experimental-strip-types --test test/*.test.mjs",
     "check": "node scripts/upstream.mjs check",
-    "pack": "npm run build && node scripts/upstream.mjs pack"
+    "pack": "npm run build && node scripts/upstream.mjs pack",
+    "catalog": "node scripts/catalog.mjs"
   },
   "dependencies": {
     "dompurify": "3.4.16",

@@ -43,6 +43,14 @@ jobs:
       - run: npm test
       - run: npm run pack
       - run: npm run check
+      - name: Generate custom update catalog
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            npm run catalog -- --tag "$GITHUB_REF_NAME"
+          else
+            npm run catalog
+          fi
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2; node24
         with:
           archive: true
@@ -50,17 +58,27 @@ jobs:
           path: |
             dist/*.piplug
             dist/*.sha256
+            dist/catalog.json
           if-no-files-found: error
           retention-days: 14
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') && github.repository == 'Naza3/pi-desktop-ocr'
     needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    concurrency:
+      group: plugin-release-channel
+      cancel-in-progress: false
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1; node24
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0; node24
+        with:
+          node-version: '24.19.0'
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2; node24
         with:
           name: pi-desktop-ocr-Linux
@@ -72,9 +90,4 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
         shell: bash
-        run: |
-          cd dist
-          sha256sum --check --strict *.sha256
-          gh release create "$RELEASE_TAG" *.piplug *.sha256 \
-            --verify-tag --title "PI Desktop OCR $RELEASE_TAG" \
-            --generate-notes
+        run: node scripts/publish-release.mjs --tag "$RELEASE_TAG"
