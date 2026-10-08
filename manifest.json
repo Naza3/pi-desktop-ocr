@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.naza3.pi-desktop-ocr",
   "name": "PI Desktop OCR",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "连接本机 OpenAI 兼容视觉服务，按顺序识别图片并保存 Markdown、可用性能统计与历史结果。",
   "author": "Naza3",
   "main": "main.cjs",
