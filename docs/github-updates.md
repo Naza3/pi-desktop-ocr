@@ -4,7 +4,7 @@ PI Desktop OCR 使用 `Naza3/pi-desktop-ocr` 自己的 GitHub Release 分发插�
 
 ## 用户配置
 
-1. 等待本仓库首次正式 Release 成功发布。Actions成功只表示构建完成，不能代替Release；首次发布前下列地址返回404。
+1. 确认可以访问本仓库的[最新正式Release](https://github.com/Naza3/pi-desktop-ocr/releases/latest)。Actions成功只表示构建完成，不能代替Release。
 2. 打开PI Desktop的 **扩展 → 市场**，将来源切换为 **自定义**。
 3. 填入完整地址，按Enter或点击输入框外保存：
 

@@ -12,7 +12,7 @@
 
 需要 **PI Desktop 0.17.0 或更新版本**。本项目依据0.17.0固定源码契约验证，更新版本需按实际兼容性判断。
 
-1. 从本仓库的 [Actions](https://github.com/Naza3/pi-desktop-ocr/actions) 下载成功构建的 artifact；解压得到 `io.github.naza3.pi-desktop-ocr-0.1.0.piplug`。后续tag发行附件见 [Releases](https://github.com/Naza3/pi-desktop-ocr/releases)。
+1. 从本仓库的 [最新正式版](https://github.com/Naza3/pi-desktop-ocr/releases/latest) 下载 `.piplug` 安装包，例如 `io.github.naza3.pi-desktop-ocr-0.1.1.piplug`。开发构建仍可从 [Actions](https://github.com/Naza3/pi-desktop-ocr/actions) 下载artifact并解压。
 2. PI Desktop 左下角 **扩展** → 右上角 **更多操作** → **安装插件包**，选择 `.piplug`。
 3. 在右侧工作面板选择“图片识别”，或运行命令 **PI Desktop OCR：打开图片识别**。
 
@@ -20,13 +20,13 @@
 
 ## GitHub 自定义更新源
 
-本项目使用自己的 GitHub Release 分发更新，不提交官方插件市场。首次正式 Release 发布后，在 PI Desktop **扩展 → 市场 → 来源 → 自定义** 中填写：
+本项目使用自己的 GitHub Release 分发更新，不提交官方插件市场。在 PI Desktop **扩展 → 市场 → 来源 → 自定义** 中填写：
 
 ```text
 https://github.com/Naza3/pi-desktop-ocr/releases/latest/download/catalog.json
 ```
 
-这是安装包所在 Release 的固定目录地址，不是仓库首页或 Actions 下载地址。发布流程会同时上传安装包、SHA256 文件和 `catalog.json`；无需手动维护目录，也不向 `main` 写回发布数据。首次发布前，这个地址返回404。
+这是安装包所在 Release 的固定目录地址，不是仓库首页或 Actions 下载地址。发布流程会同时上传安装包、SHA256 文件和 `catalog.json`；无需手动维护目录，也不向 `main` 写回发布数据。
 
 现有本地导入的插件可直接通过相同ID匹配更新。点击扩展页 **更多操作 → 检查更新**，再更新图片识别插件；插件行菜单可启用“自动更新”，之后使用 **应用自动更新** 批量应用。当前核对的PI Desktop实现没有后台定时安装机制，打开扩展页的检查仅使用缓存。新版本增加权限时需要单独确认。
 
@@ -94,6 +94,6 @@ npm run catalog
 
 首次check/pack会自动准备固定版本官方PI SDK/devkit到 `.cache/pi-devkit`，需要网络；不安装PI完整桌面workspace。也可用 `PI_PLUGIN_DEVKIT_CLI` 明确指定同固定版本官方CLI。脚本支持Linux/Windows，Windows目录关联使用junction。
 
-`build/plugin`是开发目录，`dist/*.piplug`是安装包，附带SHA256；`npm run catalog`依据同次构建生成`dist/catalog.json`。三处版本（package.json、package-lock.json、manifest.json）一致，tag采用 `v0.1.0`；tag与文件版本不一致时发行失败。main构建仅产生Actions artifact，创建有效tag才发行；预发布不会替换稳定更新源，补发旧版也不会让latest退回。
+`build/plugin`是开发目录，`dist/*.piplug`是安装包，附带SHA256；`npm run catalog`依据同次构建生成`dist/catalog.json`。三处版本（package.json、package-lock.json、manifest.json）一致，tag采用 `v<版本>`（例如`v0.1.1`）；tag与文件版本不一致时发行失败。main构建仅产生Actions artifact，创建有效tag才发行；预发布不会替换稳定更新源，补发旧版也不会让latest退回。
 
 协议见 [CONTRACT.md](CONTRACT.md)，架构/边界见 [docs/architecture.md](docs/architecture.md)，来源许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
